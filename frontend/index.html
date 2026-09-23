@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Leaf Disease Classifier</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>🍃 Leaf Disease Classifier</h1>
+      <p>Deep Learning based Mango Leaf Disease Detection with Explainable AI</p>
+    </div>
+
+    <div class="main-grid">
+      <!-- LEFT: Model + Upload -->
+      <div class="card">
+        <h2>⚙️ Select Model</h2>
+        <div class="radio-group">
+          <label class="radio-option active" data-model="custom">
+            <input type="radio" name="model" value="custom" checked />
+            <span class="radio-label">Custom CNN</span>
+            <span class="radio-desc">Custom built model</span>
+          </label>
+          <label class="radio-option" data-model="mobilenet">
+            <input type="radio" name="model" value="mobilenet" />
+            <span class="radio-label">MobileNetV2</span>
+            <span class="radio-desc">Lightweight &amp; fast</span>
+          </label>
+          <label class="radio-option" data-model="efficientnet">
+            <input type="radio" name="model" value="efficientnet" />
+            <span class="radio-label">EfficientNet</span>
+            <span class="radio-desc">High accuracy</span>
+          </label>
+        </div>
+
+        <h2 style="margin-top:25px;">📤 Upload Image</h2>
+        <div class="upload-area" id="uploadArea">
+          <div class="upload-icon">🖼️</div>
+          <div class="upload-text">
+            <strong>Click to upload</strong> or drag &amp; drop<br />
+            <small>PNG, JPG, JPEG supported</small>
+          </div>
+          <input type="file" id="fileInput" accept="image/*" hidden />
+        </div>
+
+        <div class="preview-container" id="previewContainer" style="display:none;">
+          <img id="previewImg" class="preview-img" alt="preview" />
+        </div>
+
+        <button class="btn" id="predictBtn" disabled>
+          <span id="predictBtnText">🔍 Predict Disease</span>
+        </button>
+
+        <button class="btn btn-secondary" id="explainBtn" disabled>
+          <span id="explainBtnText">🧠 Explain (Grad-CAM)</span>
+        </button>
+
+        <div class="error-box" id="errorBox" style="display:none;"></div>
+      </div>
+
+      <!-- RIGHT: Results -->
+      <div class="card">
+        <h2>📊 Prediction Results</h2>
+
+        <p id="placeholder" class="placeholder">
+          Upload an image and click Predict to see results.
+        </p>
+
+        <div class="result-box" id="resultBox" style="display:none;">
+          <div class="result-disease" id="resultDisease">—</div>
+          <div class="result-accuracy">
+            <span class="accuracy-badge" id="resultAccuracy">0%</span>
+            <span class="accuracy-label">
+              confidence<br />
+              Model: <span id="resultModel">—</span>
+            </span>
+          </div>
+          <div class="accuracy-bar">
+            <div class="accuracy-fill" id="accuracyFill" style="width:0%"></div>
+          </div>
+
+          <div class="probs-title" id="probsTitle" style="display:none;">
+            All Class Probabilities
+          </div>
+          <div id="probsList"></div>
+        </div>
+      </div>
+
+      <!-- XAI SECTION (full width) -->
+      <div class="card full-width" id="xaiCard" style="display:none;">
+        <h2>🧠 Explainable AI - Grad-CAM Visualization</h2>
+        <p class="xai-desc">
+          Red/yellow regions indicate the areas the model focused on to make this prediction.
+        </p>
+        <div class="xai-grid">
+          <div class="xai-item">
+            <img id="xaiOriginal" alt="original" />
+            <p>Original Image</p>
+          </div>
+          <div class="xai-item">
+            <img id="xaiGradcam" alt="gradcam" />
+            <p>Grad-CAM Heatmap</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>
