@@ -1,8 +1,14 @@
-fastapi==0.115.6
-uvicorn[standard]==0.34.0
-python-multipart==0.0.20
-tf-nightly
-keras-nightly
-numpy>=2.1.0
-pillow==11.1.0
-opencv-python==4.11.0.86
+# --- Backend (API server) ---
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+python-multipart>=0.0.9
+
+# --- Model inference ---
+tensorflow>=2.15.0
+numpy>=1.23.0
+scikit-learn>=1.2.0
+Pillow>=9.0.0
+matplotlib>=3.5.0
+
+# --- Grad-CAM overlay ---
+opencv-python>=4.8.0

@@ -1,16 +1,23 @@
+import os
+# Uncomment if your .keras was saved by Keras 2 (TF 2.15 era):
+# os.environ["TF_USE_LEGACY_KERAS"] = "1"
+
 from fastapi import FastAPI, File, UploadFile, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import numpy as np
 from PIL import Image
 import io
-import tensorflow as tf
-from tensorflow import keras
 import base64
+from pathlib import Path
+import tensorflow as tf
+import keras
 import cv2
-import os
 
-app = FastAPI()
+# =============================================================================
+# APP
+# =============================================================================
+app = FastAPI(title="Mango Leaf Disease Classifier API")
 
 app.add_middleware(
     CORSMiddleware,
@@ -20,89 +27,122 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Class names (adjust based on your model's classes)
+# =============================================================================
+# CONFIG
+# =============================================================================
+BASE_DIR   = Path(__file__).resolve().parent
+MODELS_DIR = BASE_DIR / "models"
+
+# Same file used for all three keys (temporary — until real models exist)
+SAME_MODEL = MODELS_DIR / "mango_leaf_cnn.keras"
+
+MODEL_PATHS = {
+    "custom":       SAME_MODEL,
+    "mobilenet":    SAME_MODEL,
+    "efficientnet": SAME_MODEL,
+}
+
+# Class names in the exact index order your model was trained on
 CLASS_NAMES = [
-    "Anthracnose",
-    "Bacterial_Canker",
-    "Cutting_Weevil",
-    "Gall_Midge",
-    "Healthy",
-    "Powdery_Mildew",
-    "Sooty_Mould"
+    "Anthracnose",      # 0
+    "Bacterial Canker", # 1
+    "Cutting Weevil",   # 2
+    "Die Back",         # 3
+    "Gall Midge",       # 4
+    "Healthy",          # 5
+    "Powdery Mildew",   # 6
+    "Sooty Mould",      # 7
 ]
 
 IMG_SIZE = (224, 224)
 
-# Cache loaded models
+# Cache — since all 3 keys point to the same file, we load it only once
 models = {}
 
+
+# =============================================================================
+# MODEL LOADING
+# =============================================================================
 def load_model(model_name: str):
     if model_name in models:
         return models[model_name]
-    
-    model_paths = {
-        "custom": "mango.keras",
-        "mobilenet": "mobilenet.keras",
-        "efficientnet": "efficientnet.keras"
-    }
-    
-    path = model_paths.get(model_name)
-    if not path or not os.path.exists(path):
-        raise FileNotFoundError(f"Model {model_name} not found at {path}")
-    
-    model = keras.models.load_model(path)
+
+    path = MODEL_PATHS.get(model_name)
+    if path is None:
+        raise ValueError(f"Unknown model: {model_name}")
+
+    if not path.exists():
+        raise FileNotFoundError(f"Model file not found: {path}")
+
+    # Reuse the already-loaded model when paths match (same file)
+    for cached_name, cached_model in models.items():
+        if MODEL_PATHS.get(cached_name) == path:
+            models[model_name] = cached_model
+            print(f"♻️  Reusing already-loaded model for '{model_name}'")
+            return cached_model
+
+    model = keras.models.load_model(str(path))
     models[model_name] = model
+    print(f"✅ Loaded '{model_name}' from {path}")
     return model
 
 
+# =============================================================================
+# PREPROCESSING
+# =============================================================================
 def preprocess_image(image_bytes: bytes, model_name: str) -> np.ndarray:
     img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
     img = img.resize(IMG_SIZE)
     arr = np.array(img).astype(np.float32)
-    
-    # EfficientNet has its own preprocessing
-    if model_name == "efficientnet":
-        from tensorflow.keras.applications.efficientnet import preprocess_input
-        arr = preprocess_input(arr)
-    elif model_name == "mobilenet":
-        from tensorflow.keras.applications.mobilenet_v2 import preprocess_input
-        arr = preprocess_input(arr)
-    else:
-        arr = arr / 255.0
-    
+
+    # Since the same custom model is used for all keys, always use 1/255 rescale.
+    # When you swap in real MobileNet/EfficientNet models, re-enable the branches
+    # below — they are commented so predictions stay correct for the custom model.
+    #
+    # if model_name == "mobilenet":
+    #     from keras.applications.mobilenet_v2 import preprocess_input
+    #     arr = preprocess_input(arr)
+    # elif model_name == "efficientnet":
+    #     from keras.applications.efficientnet import preprocess_input
+    #     arr = preprocess_input(arr)
+    # else:
+    arr = arr / 255.0
+
     return np.expand_dims(arr, axis=0)
 
 
+# =============================================================================
+# GRAD-CAM HELPERS
+# =============================================================================
 def get_last_conv_layer(model):
-    """Find the last Conv2D layer in the model"""
+    """Return the name of the last Conv2D layer (handles wrapped sub-models)."""
     for layer in reversed(model.layers):
         if isinstance(layer, tf.keras.layers.Conv2D):
             return layer.name
-        # For nested models (like MobileNet/EfficientNet)
-        if hasattr(layer, 'layers'):
-            for sub_layer in reversed(layer.layers):
-                if isinstance(sub_layer, tf.keras.layers.Conv2D):
+        if hasattr(layer, "layers"):
+            for sub in reversed(layer.layers):
+                if isinstance(sub, tf.keras.layers.Conv2D):
                     return layer.name
     return None
 
 
 def make_gradcam_heatmap(img_array, model, last_conv_layer_name, pred_index=None):
-    grad_model = tf.keras.models.Model(
-        [model.inputs],
-        [model.get_layer(last_conv_layer_name).output, model.output]
+    grad_model = keras.Model(
+        inputs=model.input,
+        outputs=[model.get_layer(last_conv_layer_name).output, model.output],
     )
-    
+
     with tf.GradientTape() as tape:
-        last_conv_layer_output, preds = grad_model(img_array)
+        last_conv_output, preds = grad_model(img_array)
         if pred_index is None:
             pred_index = tf.argmax(preds[0])
         class_channel = preds[:, pred_index]
-    
-    grads = tape.gradient(class_channel, last_conv_layer_output)
+
+    grads = tape.gradient(class_channel, last_conv_output)
     pooled_grads = tf.reduce_mean(grads, axis=(0, 1, 2))
-    
-    last_conv_layer_output = last_conv_layer_output[0]
-    heatmap = last_conv_layer_output @ pooled_grads[..., tf.newaxis]
+
+    last_conv_output = last_conv_output[0]
+    heatmap = last_conv_output @ pooled_grads[..., tf.newaxis]
     heatmap = tf.squeeze(heatmap)
     heatmap = tf.maximum(heatmap, 0) / (tf.math.reduce_max(heatmap) + 1e-8)
     return heatmap.numpy()
@@ -118,39 +158,63 @@ def overlay_gradcam(original_img: Image.Image, heatmap: np.ndarray, alpha=0.4):
     return np.uint8(superimposed)
 
 
+def _image_to_b64(img: Image.Image) -> str:
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return base64.b64encode(buf.getvalue()).decode()
+
+
+# =============================================================================
+# ROUTES
+# =============================================================================
 @app.get("/")
 def root():
-    return {"message": "Leaf Disease Classification API"}
+    return {
+        "message": "Mango Leaf Disease Classifier API",
+        "models": list(MODEL_PATHS.keys()),
+        "note": "All 3 keys currently point to the same model file.",
+        "classes": CLASS_NAMES,
+        "img_size": list(IMG_SIZE),
+    }
 
 
 @app.post("/predict")
 async def predict(
     file: UploadFile = File(...),
-    model_name: str = Form("custom")
+    model_name: str = Form("custom"),
 ):
     try:
         image_bytes = await file.read()
         model = load_model(model_name)
         img_array = preprocess_image(image_bytes, model_name)
-        
+
         predictions = model.predict(img_array, verbose=0)
         predicted_idx = int(np.argmax(predictions[0]))
         confidence = float(np.max(predictions[0]))
-        
-        disease = CLASS_NAMES[predicted_idx] if predicted_idx < len(CLASS_NAMES) else f"Class_{predicted_idx}"
-        
+
+        disease = (
+            CLASS_NAMES[predicted_idx]
+            if predicted_idx < len(CLASS_NAMES)
+            else f"Class_{predicted_idx}"
+        )
+
         all_probs = {
-            (CLASS_NAMES[i] if i < len(CLASS_NAMES) else f"Class_{i}"): float(predictions[0][i])
+            (CLASS_NAMES[i] if i < len(CLASS_NAMES) else f"Class_{i}"): float(
+                predictions[0][i]
+            )
             for i in range(len(predictions[0]))
         }
-        
+
         return JSONResponse({
             "success": True,
             "disease": disease,
             "accuracy": round(confidence * 100, 2),
             "model_used": model_name,
-            "all_probabilities": all_probs
+            "all_probabilities": all_probs,
         })
+
+    except FileNotFoundError as e:
+        return JSONResponse({"success": False, "error": str(e)}, status_code=404)
     except Exception as e:
         return JSONResponse({"success": False, "error": str(e)}, status_code=500)
 
@@ -158,45 +222,46 @@ async def predict(
 @app.post("/explain")
 async def explain(
     file: UploadFile = File(...),
-    model_name: str = Form("custom")
+    model_name: str = Form("custom"),
 ):
     try:
         image_bytes = await file.read()
         model = load_model(model_name)
         img_array = preprocess_image(image_bytes, model_name)
         original_img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-        
+
         predictions = model.predict(img_array, verbose=0)
         predicted_idx = int(np.argmax(predictions[0]))
         confidence = float(np.max(predictions[0]))
-        disease = CLASS_NAMES[predicted_idx] if predicted_idx < len(CLASS_NAMES) else f"Class_{predicted_idx}"
-        
+        disease = (
+            CLASS_NAMES[predicted_idx]
+            if predicted_idx < len(CLASS_NAMES)
+            else f"Class_{predicted_idx}"
+        )
+
         last_conv = get_last_conv_layer(model)
-        
+
         if last_conv is None:
-            # Fallback: return original image
-            buf = io.BytesIO()
-            original_img.resize(IMG_SIZE).save(buf, format="PNG")
-            overlay_b64 = base64.b64encode(buf.getvalue()).decode()
+            overlay_b64 = _image_to_b64(original_img.resize(IMG_SIZE))
         else:
             try:
                 heatmap = make_gradcam_heatmap(img_array, model, last_conv, predicted_idx)
                 overlay = overlay_gradcam(original_img, heatmap)
-                buf = io.BytesIO()
-                Image.fromarray(overlay).save(buf, format="PNG")
-                overlay_b64 = base64.b64encode(buf.getvalue()).decode()
+                overlay_b64 = _image_to_b64(Image.fromarray(overlay))
             except Exception as inner_e:
-                buf = io.BytesIO()
-                original_img.resize(IMG_SIZE).save(buf, format="PNG")
-                overlay_b64 = base64.b64encode(buf.getvalue()).decode()
-        
+                print(f"⚠️  Grad-CAM failed for {model_name}: {inner_e}")
+                overlay_b64 = _image_to_b64(original_img.resize(IMG_SIZE))
+
         return JSONResponse({
             "success": True,
             "disease": disease,
             "accuracy": round(confidence * 100, 2),
             "model_used": model_name,
-            "gradcam_image": f"data:image/png;base64,{overlay_b64}"
+            "gradcam_image": f"data:image/png;base64,{overlay_b64}",
         })
+
+    except FileNotFoundError as e:
+        return JSONResponse({"success": False, "error": str(e)}, status_code=404)
     except Exception as e:
         return JSONResponse({"success": False, "error": str(e)}, status_code=500)
 

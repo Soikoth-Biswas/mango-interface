@@ -1,0 +1,22 @@
+{
+  "idx_to_class": {
+    "0": "Anthracnose",
+    "1": "Bacterial Canker",
+    "2": "Cutting Weevil",
+    "3": "Die Back",
+    "4": "Gall Midge",
+    "5": "Healthy",
+    "6": "Powdery Mildew",
+    "7": "Sooty Mould"
+  },
+  "class_to_idx": {
+    "Anthracnose": 0,
+    "Bacterial Canker": 1,
+    "Cutting Weevil": 2,
+    "Die Back": 3,
+    "Gall Midge": 4,
+    "Healthy": 5,
+    "Powdery Mildew": 6,
+    "Sooty Mould": 7
+  }
+}
